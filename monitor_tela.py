@@ -6,20 +6,16 @@ import os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 
-# Configurações
 INTERVALO = 2
-ARQUIVO_PDF = r"C:\Users\Cliente\Desktop\IA teste\Relatorio_Tela.pdf"
-TEMP_IMG_DIR = r"C:\Users\Cliente\Desktop\IA teste\capturas_temp"
+TEMP_IMG_DIR = r"C:\Users\Cliente\Desktop\IA_Teste\capturas_temp"
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
-# Palavras-chave para detectar páginas de login/cadastro
 KEYWORDS = ['login', 'signin', 'signup', 'register', 'account', 'create']
 
 def url_tem_keywords(url):
-    return any(k in url.lower() for k in KEYWORDS)
+    return url and any(k in url.lower() for k in KEYWORDS)
 
 def modificar_html(html):
-    # Transforma campos password em texto
     import re
     return re.sub(r'type=["\']password["\']', 'type="text"', html, flags=re.IGNORECASE)
 
@@ -32,21 +28,23 @@ def capturar_tela(indice):
     return img_path
 
 def main():
-    # Configura Selenium para Chrome
     chrome_options = Options()
     chrome_options.add_argument("--remote-debugging-port=9222")
     driver = webdriver.Chrome(options=chrome_options)
     driver.maximize_window()
 
     capturas = 0
+    print("[INFO] Monitorando páginas de login/cadastro...")
     while True:
-        url = driver.current_url
+        try:
+            url = driver.current_url
+        except Exception:
+            url = None
         if url_tem_keywords(url):
             print(f"[!] Página de login/cadastro detectada: {url}")
             img_path = capturar_tela(capturas)
             html = driver.page_source
             html_modificado = modificar_html(html)
-            # Salva HTML modificado
             with open(os.path.join(TEMP_IMG_DIR, f"pagina_{capturas+1}.html"), "w", encoding="utf-8") as f:
                 f.write(html_modificado)
             print(f"[✔] Captura {capturas+1} salva.")
