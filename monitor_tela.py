@@ -1,119 +1,59 @@
 import time
 import mss
-import pytesseract
 from PIL import Image
 from datetime import datetime
-from collections import Counter
-import re
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
 import os
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-# ------------------- Configurações -------------------
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-INTERVALO = 5            # segundos entre capturas
-TOTAL_CAPTURAS = 5       # número de capturas
+# Configurações
+INTERVALO = 2
 ARQUIVO_PDF = r"C:\Users\Cliente\Desktop\IA teste\Relatorio_Tela.pdf"
 TEMP_IMG_DIR = r"C:\Users\Cliente\Desktop\IA teste\capturas_temp"
-
-# Criar pasta temporária se não existir
 os.makedirs(TEMP_IMG_DIR, exist_ok=True)
 
-# ------------------- Funções -------------------
-def capturar_texto(indice):
-    try:
-        with mss.mss() as sct:
-            screenshot = sct.grab(sct.monitors[1])
-            img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+# Palavras-chave para detectar páginas de login/cadastro
+KEYWORDS = ['login', 'signin', 'signup', 'register', 'account', 'create']
 
-            # Salva a imagem temporariamente
-            img_path = os.path.join(TEMP_IMG_DIR, f"captura_{indice+1}.png")
-            img.save(img_path)
+def url_tem_keywords(url):
+    return any(k in url.lower() for k in KEYWORDS)
 
-            # OCR em inglês (funciona sem instalar idioma extra)
-            texto = pytesseract.image_to_string(img, lang="eng")
-            
-            # Limpeza de texto: remove linhas curtas ou caracteres sem sentido
-            linhas = [linha.strip() for linha in texto.split('\n') if len(linha.strip()) > 1 and re.search(r'\w', linha)]
-            texto_limpo = '\n'.join(linhas) if linhas else "(Nenhum texto reconhecido)"
-            
-        return texto_limpo, img_path
-    except Exception as e:
-        print(f"[!] Erro na captura: {e}")
-        return "(Erro na captura)", None
+def modificar_html(html):
+    # Transforma campos password em texto
+    import re
+    return re.sub(r'type=["\']password["\']', 'type="text"', html, flags=re.IGNORECASE)
 
-def gerar_pdf(dados, estatisticas):
-    doc = SimpleDocTemplate(ARQUIVO_PDF, pagesize=A4)
-    estilos = getSampleStyleSheet()
-    conteudo = []
+def capturar_tela(indice):
+    with mss.mss() as sct:
+        screenshot = sct.grab(sct.monitors[1])
+        img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
+        img_path = os.path.join(TEMP_IMG_DIR, f"captura_{indice+1}.png")
+        img.save(img_path)
+    return img_path
 
-    # ----------------- Resumo -----------------
-    conteudo.append(Paragraph("📄 Relatório de Captura de Tela", estilos["Title"]))
-    conteudo.append(Spacer(1, 12))
-    conteudo.append(Paragraph(f"Total de capturas: {TOTAL_CAPTURAS}", estilos["Normal"]))
-    conteudo.append(Paragraph(f"Capturas com texto válido: {estatisticas['capturas_validas']}", estilos["Normal"]))
-    conteudo.append(Paragraph("Palavras mais frequentes:", estilos["Normal"]))
-
-    for palavra, cont in estatisticas['palavras_frequentes']:
-        conteudo.append(Paragraph(f"{palavra}: {cont}", estilos["Normal"]))
-    conteudo.append(Spacer(1, 24))
-
-    # ----------------- Capturas detalhadas -----------------
-    for i, entrada in enumerate(dados):
-        conteudo.append(Paragraph(f"📸 Captura {i+1} - {entrada['hora']}", estilos["Heading4"]))
-        if entrada['imagem']:
-            # Redimensiona imagem para caber na página
-            try:
-                img = Image.open(entrada['imagem'])
-                max_width = 400
-                max_height = 300
-                width, height = img.size
-                ratio = min(max_width / width, max_height / height)
-                new_width = int(width * ratio)
-                new_height = int(height * ratio)
-                conteudo.append(RLImage(entrada['imagem'], width=new_width, height=new_height))
-            except Exception as e:
-                conteudo.append(Paragraph(f"[Erro ao carregar imagem: {e}]", estilos["Normal"]))
-        conteudo.append(Paragraph(entrada['texto'].replace("\n", "<br/>"), estilos["Normal"]))
-        conteudo.append(Spacer(1, 12))
-
-    doc.build(conteudo)
-    print(f"[✔] Relatório salvo em {ARQUIVO_PDF}")
-
-def analisar_estatisticas(dados):
-    todas_palavras = []
-    capturas_validas = 0
-    for entrada in dados:
-        if entrada['texto'] != "(Nenhum texto reconhecido)" and entrada['texto'] != "(Erro na captura)":
-            capturas_validas += 1
-            palavras = re.findall(r'\w+', entrada['texto'])
-            todas_palavras.extend(palavras)
-    palavras_frequentes = Counter(todas_palavras).most_common(10)
-    return {'capturas_validas': capturas_validas, 'palavras_frequentes': palavras_frequentes}
-
-# ------------------- Execução principal -------------------
 def main():
-    dados = []
+    # Configura Selenium para Chrome
+    chrome_options = Options()
+    chrome_options.add_argument("--remote-debugging-port=9222")
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.maximize_window()
 
-    for i in range(TOTAL_CAPTURAS):
-        print(f"📸 Captura {i+1}/{TOTAL_CAPTURAS}...")
-        texto, img_path = capturar_texto(i)
-        dados.append({
-            "hora": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            "texto": texto,
-            "imagem": img_path
-        })
-        time.sleep(INTERVALO)
-
-    estatisticas = analisar_estatisticas(dados)
-    gerar_pdf(dados, estatisticas)
-
-    # Opcional: apagar imagens temporárias
-    # for entrada in dados:
-    #     if entrada['imagem']:
-    #         os.remove(entrada['imagem'])
+    capturas = 0
+    while True:
+        url = driver.current_url
+        if url_tem_keywords(url):
+            print(f"[!] Página de login/cadastro detectada: {url}")
+            img_path = capturar_tela(capturas)
+            html = driver.page_source
+            html_modificado = modificar_html(html)
+            # Salva HTML modificado
+            with open(os.path.join(TEMP_IMG_DIR, f"pagina_{capturas+1}.html"), "w", encoding="utf-8") as f:
+                f.write(html_modificado)
+            print(f"[✔] Captura {capturas+1} salva.")
+            capturas += 1
+            time.sleep(INTERVALO)
+        else:
+            time.sleep(1)
 
 if __name__ == "__main__":
     main()
